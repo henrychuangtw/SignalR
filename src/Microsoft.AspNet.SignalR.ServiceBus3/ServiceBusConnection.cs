@@ -32,7 +32,7 @@ namespace Microsoft.AspNet.SignalR.ServiceBus
         private readonly TraceSource _trace;
 
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
-        private readonly ConcurrentDictionary<Task, object> _processMessagesTasks = new ConcurrentDictionary<Task, object>();
+        private readonly ConcurrentDictionary<Task, bool> _processMessagesTasks = new ConcurrentDictionary<Task, bool>();
 
         public ServiceBusConnection(ServiceBusScaleoutConfiguration configuration, TraceSource traceSource)
         {
@@ -174,14 +174,13 @@ namespace Microsoft.AspNet.SignalR.ServiceBus
 
                 var receiverContext = new ReceiverContext(topicIndex, receiver, connectionContext);
 
-                var task = Task.Run(() => ProcessMessages(receiverContext))
-                    .ContinueWith(t =>
+                var task = Task.Run(() => ProcessMessages(receiverContext));
+                _processMessagesTasks.GetOrAdd(task, false);
+                task.ContinueWith(t =>
                     {
-                        object value;
-                        _processMessagesTasks.TryRemove(t, out value);
+                        bool value;
+                        _processMessagesTasks.TryRemove(task, out value);
                     });
-
-                _processMessagesTasks.GetOrAdd(task, null);
 
                 // Open the stream
                 connectionContext.OpenStream(topicIndex);
