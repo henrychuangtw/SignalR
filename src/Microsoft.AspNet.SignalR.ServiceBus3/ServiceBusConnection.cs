@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Configuration;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.ServiceBus;
@@ -31,7 +32,7 @@ namespace Microsoft.AspNet.SignalR.ServiceBus
         private readonly TraceSource _trace;
 
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
-        private readonly ConcurrentBag<Task> _processMessagesTasks = new ConcurrentBag<Task>();
+        private readonly ConcurrentDictionary<Task, object> _processMessagesTasks = new ConcurrentDictionary<Task, object>();
 
         public ServiceBusConnection(ServiceBusScaleoutConfiguration configuration, TraceSource traceSource)
         {
@@ -173,8 +174,14 @@ namespace Microsoft.AspNet.SignalR.ServiceBus
 
                 var receiverContext = new ReceiverContext(topicIndex, receiver, connectionContext);
 
-                var t = Task.Run(() => ProcessMessages(receiverContext));
-                _processMessagesTasks.Add(t);
+                var task = Task.Run(() => ProcessMessages(receiverContext))
+                    .ContinueWith(t =>
+                    {
+                        object value;
+                        _processMessagesTasks.TryRemove(t, out value);
+                    });
+
+                _processMessagesTasks.GetOrAdd(task, null);
 
                 // Open the stream
                 connectionContext.OpenStream(topicIndex);
@@ -228,8 +235,7 @@ namespace Microsoft.AspNet.SignalR.ServiceBus
                 }
 
                 _cts.Cancel();
-                var tasks = _processMessagesTasks.ToArray();
-                Task.WaitAll(tasks, DefaultReadTimeout);
+                Task.WaitAll(_processMessagesTasks.Keys.ToArray(), DefaultReadTimeout);
             }
         }
 
