@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Diagnostics;
@@ -28,6 +29,9 @@ namespace Microsoft.AspNet.SignalR.ServiceBus
         private readonly ServiceBusScaleoutConfiguration _configuration;
         private readonly string _connectionString;
         private readonly TraceSource _trace;
+
+        private readonly CancellationTokenSource _cts = new CancellationTokenSource();
+        private readonly ConcurrentBag<Task> _processMessagesTasks = new ConcurrentBag<Task>();
 
         public ServiceBusConnection(ServiceBusScaleoutConfiguration configuration, TraceSource traceSource)
         {
@@ -169,7 +173,8 @@ namespace Microsoft.AspNet.SignalR.ServiceBus
 
                 var receiverContext = new ReceiverContext(topicIndex, receiver, connectionContext);
 
-                Task.Run(() => ProcessMessages(receiverContext));
+                var t = Task.Run(() => ProcessMessages(receiverContext));
+                _processMessagesTasks.Add(t);
 
                 // Open the stream
                 connectionContext.OpenStream(topicIndex);
@@ -221,6 +226,10 @@ namespace Microsoft.AspNet.SignalR.ServiceBus
                 {
                     _factory.Close();
                 }
+
+                _cts.Cancel();
+                var tasks = _processMessagesTasks.ToArray();
+                Task.WaitAll(tasks, DefaultReadTimeout);
             }
         }
 
@@ -233,7 +242,7 @@ namespace Microsoft.AspNet.SignalR.ServiceBus
         {
             TimeSpan backoffAmount = _backoffTime;
 
-            while (true)
+            while (!_cts.IsCancellationRequested)
             {
                 try
                 {
@@ -262,7 +271,7 @@ namespace Microsoft.AspNet.SignalR.ServiceBus
                     catch { }
 
                     receiverContext.OnError(ex);
-                    var _ = TryCreateSubscription(receiverContext);
+                    var ignored = TryCreateSubscription(receiverContext);
                     return;
                 }
                 catch (ServerBusyException ex)
