@@ -234,6 +234,7 @@ namespace Microsoft.AspNet.SignalR.ServiceBus
                 }
 
                 _cts.Cancel();
+                _cts.Dispose();
                 if (!Task.WaitAll(_processMessagesTasks.Keys.ToArray(), DefaultReadTimeout))
                 {
                     _trace.TraceInformation("Stopping process message threads timed out.");
